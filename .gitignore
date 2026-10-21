@@ -1,0 +1,4 @@
+meal.db
+meal.db-wal
+meal.db-shm
+__pycache__/

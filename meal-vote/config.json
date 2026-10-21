@@ -1,0 +1,12 @@
+{
+  "port": 8080,
+  "utcOffsetHours": 9,
+  "openDaysAhead": 7,
+  "sessionDays": 30,
+  "departments": ["생산", "품질", "설비", "관리", "협력사"],
+  "meals": [
+    { "id": "lunch", "name": "중식", "cutoff": "09:30", "cutoffDayOffset": 0, "days": [1, 2, 3, 4, 5] },
+    { "id": "dinner", "name": "석식", "cutoff": "14:00", "cutoffDayOffset": 0, "days": [1, 2, 3, 4, 5] }
+  ],
+  "holidays": ["2026-12-25", "2027-01-01"]
+}

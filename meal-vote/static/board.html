@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>식수 현황판</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <h1>식수 현황판</h1>
+  <nav><a href="/">투표하기</a></nav>
+</header>
+
+<main class="wide">
+  <div class="toolbar">
+    <div class="board-tools">
+      <input type="date" id="date">
+      <button type="button" id="today">오늘</button>
+      <a id="csv" href="#">엑셀(CSV) 받기</a>
+    </div>
+    <span class="clock" id="updated"></span>
+  </div>
+  <div id="meals" class="board-meals"></div>
+  <p class="hint">30초마다 자동으로 새로고침됩니다. 마감 시각이 지나면 숫자가 확정되며, 이후에는 누구도 바꿀 수 없습니다.</p>
+</main>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const STATUS = { open: "투표 중", closed: "마감 확정", upcoming: "투표 전" };
+
+async function load() {
+  const date = $("#date").value;
+  const res = await fetch("/api/summary" + (date ? `?date=${date}` : ""));
+  const data = await res.json();
+  if (!res.ok) {
+    $("#meals").innerHTML = `<div class="card">${esc(data.error || "불러오지 못했습니다.")}</div>`;
+    return;
+  }
+  if (!date) $("#date").value = data.date;
+  $("#csv").href = `/api/export.csv?date=${data.date}`;
+  $("#updated").textContent = `${data.label} · 등록 인원 ${data.registered}명 · ` +
+    new Date(data.serverTime).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul" }) + " 기준";
+  if (!data.meals.length) {
+    $("#meals").innerHTML = '<div class="card">이날은 식사가 없습니다.</div>';
+    return;
+  }
+  $("#meals").innerHTML = data.meals.map((m) => `
+    <div class="card board-meal">
+      <h2>${esc(m.name)} <span class="badge ${m.status}">${STATUS[m.status]}</span></h2>
+      <div class="hint">${esc(m.cutoffLabel)}</div>
+      <div class="big">${m.eat}<small> 명</small></div>
+      <div class="sub"><span>안먹음 ${m.skip}</span><span>미응답 ${m.noResponse}</span></div>
+      ${m.byDept.length ? `<table>
+        <tr><th>부서</th><th class="num">식수</th></tr>
+        ${m.byDept.map((d) => `<tr><td>${esc(d.dept)}</td><td class="num">${d.eat}</td></tr>`).join("")}
+      </table>` : ""}
+      ${m.eaters.length ? `<details><summary>먹는 사람 명단 (${m.eat}명)</summary>
+        <ul>${m.eaters.map((p) => `<li>${esc(p.name)} <span class="hint">${esc(p.dept)}</span></li>`).join("")}</ul>
+      </details>` : ""}
+    </div>`).join("");
+}
+
+$("#date").addEventListener("change", load);
+$("#today").addEventListener("click", () => { $("#date").value = ""; load(); });
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
