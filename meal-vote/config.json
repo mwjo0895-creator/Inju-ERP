@@ -3,7 +3,6 @@
   "port": 8080,
   "baseUrl": "",
   "utcOffsetHours": 9,
-  "openDaysAhead": 7,
   "remindMinutesBefore": 15,
   "meals": [
     { "id": "lunch", "name": "점심", "notifyAt": "08:00", "cutoff": "09:00", "finalAt": "09:30", "days": [1, 2, 3, 4, 5] },

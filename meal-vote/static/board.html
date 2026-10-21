@@ -14,22 +14,42 @@
 </header>
 
 <main class="wide">
-  <div class="toolbar">
-    <div class="board-tools">
-      <input type="date" id="date" aria-label="날짜">
-      <button type="button" id="today">오늘</button>
-      <a id="csv-day" href="#">이날 명단(CSV)</a>
-      <a id="csv-month" href="#">이달 정산(CSV)</a>
-    </div>
-    <span class="clock" id="updated"></span>
+  <div class="tabs board-tabs">
+    <button type="button" data-view="day" class="on">일별</button>
+    <button type="button" data-view="month">월별</button>
   </div>
-  <div id="meals" class="board-meals"></div>
-  <p class="hint">30초마다 자동으로 새로고침됩니다. 투표 마감 뒤에는 팀별 담당자가 추가 인원을 등록하고, 확정 시각에 업체로 자동 통보됩니다.</p>
+
+  <section id="day-view">
+    <div class="toolbar">
+      <div class="board-tools">
+        <input type="date" id="date" aria-label="날짜">
+        <button type="button" id="today">오늘</button>
+        <a id="csv-day" href="#">이날 명단(CSV)</a>
+      </div>
+      <span class="clock" id="updated"></span>
+    </div>
+    <div id="meals" class="board-meals"></div>
+    <p class="hint">30초마다 자동으로 새로고침됩니다. 투표 마감 뒤에는 팀별 담당자가 추가 인원을 등록하고, 확정 시각에 업체로 자동 통보됩니다.</p>
+  </section>
+
+  <section id="month-view" hidden>
+    <div class="toolbar">
+      <div class="board-tools">
+        <input type="month" id="month" aria-label="월">
+        <a id="csv-month" href="#">정산용 CSV</a>
+      </div>
+    </div>
+    <div class="board-meals" id="month-body"></div>
+    <p class="hint">합계는 확정된 끼니만 셉니다. 날짜를 누르면 그날 현황으로 갑니다.</p>
+  </section>
 </main>
 
 <script>
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+let view = "day";
+
+/* ---- 일별 ---- */
 
 function phaseBadge(m) {
   const text = {
@@ -61,7 +81,7 @@ function mealCard(m) {
   </div>`;
 }
 
-async function load() {
+async function loadDay() {
   const date = $("#date").value;
   const res = await fetch("/api/summary" + (date ? `?date=${date}` : ""));
   const data = await res.json();
@@ -71,7 +91,6 @@ async function load() {
   }
   if (!date) $("#date").value = data.date;
   $("#csv-day").href = `/api/export.csv?date=${data.date}`;
-  $("#csv-month").href = `/api/export.csv?month=${data.date.slice(0, 7)}`;
   $("#updated").textContent = `${data.label} · 정기 인원 ${data.registered}명 · ` +
     new Date(data.serverTime).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul" }) + " 기준";
   // 열어 둔 명단은 새로고침해도 열린 채로 둔다
@@ -80,10 +99,65 @@ async function load() {
   document.querySelectorAll(".board-meal details").forEach((d, i) => { d.open = !!open[i]; });
 }
 
-$("#date").addEventListener("change", load);
-$("#today").addEventListener("click", () => { $("#date").value = ""; load(); });
-load();
-setInterval(load, 30000);
+/* ---- 월별 ---- */
+
+function monthCell(cell) {
+  if (!cell) return '<td class="num muted">-</td>';
+  const extra = cell.extra ? ` <small>(+${cell.extra})</small>` : "";
+  return cell.final
+    ? `<td class="num">${cell.total}${extra}</td>`
+    : `<td class="num muted">${cell.total}${extra} <small>진행 중</small></td>`;
+}
+
+async function loadMonth() {
+  const month = $("#month").value;
+  const res = await fetch("/api/month" + (month ? `?month=${month}` : ""));
+  const data = await res.json();
+  if (!res.ok) {
+    $("#month-body").innerHTML = `<div class="card">${esc(data.error || "불러오지 못했습니다.")}</div>`;
+    return;
+  }
+  if (!month) $("#month").value = data.month;
+  $("#csv-month").href = `/api/export.csv?month=${data.month}`;
+  const meals = data.meals;
+  const head = `<tr><th>날짜</th>${meals.map((m) => `<th class="num">${esc(m.name)}</th>`).join("")}</tr>`;
+  const days = data.days.map((d) => `<tr class="go" data-date="${d.date}">
+      <td><button type="button" class="link">${esc(d.label)}</button></td>${meals.map((m) => monthCell(d.meals[m.id])).join("")}
+    </tr>`).join("");
+  const total = `<tr class="sum"><td>합계</td>${meals.map((m) => `<td class="num">${data.totals[m.id]}</td>`).join("")}</tr>`;
+  const groups = data.groups.map((g) => `<tr><td>${esc(g.grp)}</td>${meals.map((m) => `<td class="num">${g.meals[m.id]}</td>`).join("")}
+      <td class="num"><b>${g.total}</b></td></tr>`).join("");
+  $("#month-body").innerHTML = data.days.length ? `
+    <div class="card"><h2 class="card-title">날짜별</h2><table>${head}${days}${total}</table></div>
+    <div class="card"><h2 class="card-title">분류별 합계</h2>
+      ${groups ? `<table><tr><th>분류</th>${meals.map((m) => `<th class="num">${esc(m.name)}</th>`).join("")}<th class="num">합계</th></tr>${groups}</table>`
+               : '<p class="hint">아직 확정된 끼니가 없습니다.</p>'}
+    </div>` : '<div class="card">이달에는 아직 기록이 없습니다.</div>';
+}
+
+$("#month-body").addEventListener("click", (e) => {
+  const row = e.target.closest("tr.go");
+  if (!row) return;
+  $("#date").value = row.dataset.date;
+  show("day");
+});
+
+/* ---- 공통 ---- */
+
+function show(v) {
+  view = v;
+  document.querySelectorAll(".board-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+  $("#day-view").hidden = v !== "day";
+  $("#month-view").hidden = v !== "month";
+  (v === "day" ? loadDay : loadMonth)();
+}
+
+document.querySelectorAll(".board-tabs button").forEach((b) => b.addEventListener("click", () => show(b.dataset.view)));
+$("#date").addEventListener("change", loadDay);
+$("#today").addEventListener("click", () => { $("#date").value = ""; loadDay(); });
+$("#month").addEventListener("change", loadMonth);
+loadDay();
+setInterval(() => { if (view === "day") loadDay(); }, 30000);
 </script>
 </body>
 </html>

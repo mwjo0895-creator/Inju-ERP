@@ -273,7 +273,6 @@ class App:
         self.meals = config["meals"]
         self.meal_by_id = {m["id"]: m for m in self.meals}
         self.holidays = set(config.get("holidays", []))
-        self.days_ahead = config.get("openDaysAhead", 7)
         self.remind = timedelta(minutes=config.get("remindMinutesBefore", 15))
         self.vendor = config.get("vendor") or {}
         self.site = config.get("siteName", "")
@@ -367,7 +366,8 @@ class App:
         return day.isoweekday() in meal.get("days", ALL_DAYS) and day.isoformat() not in self.holidays
 
     def beyond_window(self, day, now):
-        return day > now.date() + timedelta(days=self.days_ahead)
+        """투표와 추가 인원 등록은 그날 당일 것만 받는다."""
+        return day > now.date()
 
     def vote_status(self, meal, day, now):
         if now >= self.at(day, meal["cutoff"]):
@@ -487,46 +487,43 @@ class App:
                 "manager": bool(u["manager"])}
 
     def api_slots(self, req):
+        """오늘 식사와 내 응답 (담당자는 추가 인원 칸 포함)."""
         now = self.now()
-        today = now.date().isoformat()
+        day = now.date()
         u = req.user
         with self.lock:
             rows = self.db.execute(
-                "SELECT meal_date, meal, choice FROM votes WHERE user_id = ? AND meal_date >= ?", (u["id"], today)
+                "SELECT meal, choice FROM votes WHERE user_id = ? AND meal_date = ?", (u["id"], day.isoformat())
             ).fetchall()
             extra_rows = self.db.execute(
-                "SELECT meal_date, meal, count, note FROM extras WHERE grp = ? AND meal_date >= ?", (u["grp"], today)
+                "SELECT meal, count, note FROM extras WHERE grp = ? AND meal_date = ?", (u["grp"], day.isoformat())
             ).fetchall()
-        mine = {(r["meal_date"], r["meal"]): r["choice"] for r in rows}
-        extras = {(r["meal_date"], r["meal"]): r for r in extra_rows}
-        days = []
-        for i in range(self.days_ahead + 1):
-            day = now.date() + timedelta(days=i)
-            meals = []
-            for meal in self.meals:
-                if not self.is_served(meal, day):
-                    continue
-                key = (day.isoformat(), meal["id"])
-                item = {
-                    "id": meal["id"],
-                    "name": meal["name"],
-                    "cutoff": meal["cutoff"],
-                    "finalAt": meal["finalAt"],
-                    "cutoffAt": epoch_ms(self.at(day, meal["cutoff"])),
-                    "finalAtMs": epoch_ms(self.at(day, meal["finalAt"])),
-                    "status": self.vote_status(meal, day, now),
-                    "choice": mine.get(key),
+        mine = {r["meal"]: r["choice"] for r in rows}
+        extras = {r["meal"]: r for r in extra_rows}
+        meals = []
+        for meal in self.meals:
+            if not self.is_served(meal, day):
+                continue
+            item = {
+                "id": meal["id"],
+                "name": meal["name"],
+                "cutoff": meal["cutoff"],
+                "finalAt": meal["finalAt"],
+                "cutoffAt": epoch_ms(self.at(day, meal["cutoff"])),
+                "finalAtMs": epoch_ms(self.at(day, meal["finalAt"])),
+                "status": self.vote_status(meal, day, now),
+                "choice": mine.get(meal["id"]),
+            }
+            if u["manager"]:
+                extra = extras.get(meal["id"])
+                item["extra"] = {
+                    "status": self.extra_status(meal, day, now),
+                    "count": extra["count"] if extra else 0,
+                    "note": extra["note"] if extra else "",
                 }
-                if u["manager"]:
-                    extra = extras.get(key)
-                    item["extra"] = {
-                        "status": self.extra_status(meal, day, now),
-                        "count": extra["count"] if extra else 0,
-                        "note": extra["note"] if extra else "",
-                    }
-                meals.append(item)
-            days.append({"date": day.isoformat(), "label": day_label(day), "isToday": i == 0, "meals": meals})
-        return {"serverTime": epoch_ms(now), "days": days}
+            meals.append(item)
+        return {"serverTime": epoch_ms(now), "date": day.isoformat(), "label": day_label(day), "meals": meals,
+                "dayEndsAt": epoch_ms(self.at(day + timedelta(days=1), "00:00"))}
 
     def parse_slot(self, data):
         meal = self.meal_by_id.get(data.get("meal"))
@@ -548,7 +545,7 @@ class App:
             if status == "closed":
                 raise ApiError(403, f"{meal['name']} 투표가 마감되었습니다. ({meal['cutoff']} 마감)")
             if status == "upcoming":
-                raise ApiError(403, "아직 투표가 열리지 않은 날짜입니다.")
+                raise ApiError(403, "오늘 식사만 투표할 수 있습니다.")
             stamp = now.isoformat(timespec="seconds")
             with self.db:
                 self.db.execute(
@@ -579,7 +576,7 @@ class App:
             if status == "closed":
                 raise ApiError(403, f"{meal['name']} 추가 인원 등록이 마감되었습니다. ({meal['finalAt']} 확정)")
             if status == "upcoming":
-                raise ApiError(403, "아직 등록할 수 없는 날짜입니다.")
+                raise ApiError(403, "오늘 식사만 등록할 수 있습니다.")
             with self.db:
                 key = (day.isoformat(), meal["id"], req.user["grp"])
                 if count == 0 and not note:
@@ -689,24 +686,54 @@ class App:
                     rows.append([day.isoformat(), meal["name"], g, "", "추가 인원", f"{count}명", note])
         return csv_resp(rows, f"meal_{day.isoformat()}.csv")
 
-    def export_month(self, month):
-        """월별 식대 정산용: 확정된 끼니만 날짜·식사·분류별 인원으로 내보낸다."""
-        if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+    def month_summary(self, month):
+        """그달 1일부터 오늘까지, 식사가 있던 날의 끼니별 집계 목록."""
+        if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month or ""):
             raise ApiError(400, "월 형식이 잘못되었습니다. (예: 2026-10)")
         now = self.now()
-        rows = [["날짜", "요일", "식사", "분류", "정기", "추가", "합계", "특이사항"]]
+        result = []
         day = date.fromisoformat(month + "-01")
-        while day.strftime("%Y-%m") == month:
-            data = None
-            for meal in self.meals:
-                if not self.is_served(meal, day) or self.phase(meal, day, now) != "final":
-                    continue
-                data = data or self.day_data(day)
-                for g in self.summarize(day, meal, data, now)["groups"]:
-                    if g["total"]:
-                        rows.append([day.isoformat(), WEEKDAY_KO[day.weekday()], meal["name"], g["grp"],
-                                     g["regular"], g["extra"], g["total"], g["note"]])
+        while day.strftime("%Y-%m") == month and day <= now.date():
+            meals = [m for m in self.meals if self.is_served(m, day)]
+            if meals:
+                data = self.day_data(day)
+                result.append((day, [self.summarize(day, m, data, now) for m in meals]))
             day += timedelta(days=1)
+        return result
+
+    def api_month(self, req):
+        month = (req.query.get("month") or [None])[0] or self.now().strftime("%Y-%m")
+        days, totals, groups = [], {m["id"]: 0 for m in self.meals}, {}
+        for day, summaries in self.month_summary(month):
+            cells = {}
+            for s in summaries:
+                final = s["phase"] == "final"
+                cells[s["id"]] = {"total": s["total"], "extra": s["extra"], "final": final}
+                if not final:  # 아직 확정 전인 오늘 끼니는 합계에서 뺀다
+                    continue
+                totals[s["id"]] += s["total"]
+                for g in s["groups"]:
+                    groups.setdefault(g["grp"], {m["id"]: 0 for m in self.meals})[s["id"]] += g["total"]
+            days.append({"date": day.isoformat(), "label": day_label(day), "meals": cells})
+        return {
+            "month": month,
+            "meals": [{"id": m["id"], "name": m["name"]} for m in self.meals],
+            "days": days,
+            "totals": totals,
+            "groups": [{"grp": g, "meals": counts, "total": sum(counts.values())} for g, counts in groups.items()],
+        }
+
+    def export_month(self, month):
+        """월별 식대 정산용: 확정된 끼니만 날짜·식사·분류별 인원으로 내보낸다."""
+        rows = [["날짜", "요일", "식사", "분류", "정기", "추가", "합계", "특이사항"]]
+        for day, summaries in self.month_summary(month):
+            for s in summaries:
+                if s["phase"] != "final":
+                    continue
+                for g in s["groups"]:
+                    if g["total"]:
+                        rows.append([day.isoformat(), WEEKDAY_KO[day.weekday()], s["name"], g["grp"],
+                                     g["regular"], g["extra"], g["total"], g["note"]])
         return csv_resp(rows, f"meal_{month}.csv")
 
     # ---- 자동 알림 ----
@@ -779,7 +806,6 @@ class App:
             "card": card([text_block(title, heading=True), text_block(text)], [
                 open_url("먹음", self.personal_url(u, day, meal, "eat")),
                 open_url("안먹음", self.personal_url(u, day, meal, "skip")),
-                open_url("다른 날도 미리 투표", self.personal_url(u)),
             ]),
         } for u in users]
         return self.payload(kind, day, meal, chat=chats)
@@ -865,6 +891,7 @@ ROUTES = {
     ("POST", "/api/vote"): ("api_vote", True),
     ("POST", "/api/extra"): ("api_extra", True),
     ("GET", "/api/summary"): ("api_summary", False),
+    ("GET", "/api/month"): ("api_month", False),
     ("GET", "/api/export.csv"): ("api_export", False),
 }
 

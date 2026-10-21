@@ -28,11 +28,8 @@
   <div id="banner" class="banner" hidden></div>
 
   <section id="vote" hidden>
-    <div class="toolbar">
-      <span class="clock" id="clock"></span>
-      <button id="all-eat" type="button">미투표 모두 '먹음'</button>
-    </div>
-    <div id="days"></div>
+    <div class="toolbar"><span class="clock" id="clock"></span></div>
+    <div id="today"></div>
     <p class="hint">마감 시각은 서버 시계 기준이며, 마감이 지나면 자동으로 잠겨 누구도 바꿀 수 없습니다.
       투표하지 않으면 식사가 준비되지 않습니다.</p>
   </section>
@@ -47,7 +44,7 @@ const CHOICE = { eat: "먹음", skip: "안먹음" };
 
 let clockOffset = 0;  // 서버 시각 - 브라우저 시각 (ms)
 let me = null;
-let days = [];
+let today = null;  // 오늘 식사 목록 (서버 /api/slots)
 const serverNow = () => Date.now() + clockOffset;
 
 async function api(path, body) {
@@ -84,10 +81,8 @@ function banner(text, ok) {
 
 function remaining(ms) {
   const s = Math.floor(ms / 1000);
-  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-  if (d > 0) return `${d}일 ${h}시간`;
-  if (h > 0) return `${h}시간 ${m}분`;
-  return `${m}분 ${s % 60}초`;
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h > 0 ? `${h}시간 ${m}분` : `${m}분 ${s % 60}초`;
 }
 
 function showNoLogin() {
@@ -104,29 +99,21 @@ $("#logout").addEventListener("click", async () => {
 
 /* ---- 투표 ---- */
 
-async function loadSlots() {
-  const data = await api("/api/slots");
-  clockOffset = data.serverTime - Date.now();
-  days = data.days;
+async function load() {
+  today = await api("/api/slots");
+  clockOffset = today.serverTime - Date.now();
   render();
 }
 
-function findMeal(date, id) {
-  const day = days.find((d) => d.date === date);
-  return { day, meal: day && day.meals.find((m) => m.id === id) };
-}
-
 function render() {
-  $("#days").innerHTML = days.map((day) => `
-    <div class="card day">
-      <h2>${esc(day.label)}${day.isToday ? '<span class="today">오늘</span>' : ""}</h2>
-      ${day.meals.length ? day.meals.map((m) => mealRow(day, m)).join("") : '<p class="none">식사 없음 (휴무)</p>'}
-    </div>`).join("");
+  $("#today").innerHTML = `<div class="card day">
+    <h2>${esc(today.label)}<span class="today">오늘</span></h2>
+    ${today.meals.length ? today.meals.map(mealRow).join("") : '<p class="none">오늘은 식사가 없습니다 (휴무)</p>'}
+  </div>`;
   tick();
 }
 
-function mealRow(day, m) {
-  const key = `${day.date}|${m.id}`;
+function mealRow(m) {
   let vote;
   if (m.status === "closed") {
     const result = m.choice ? `<b class="${m.choice}">${CHOICE[m.choice]}</b>` : "미투표";
@@ -137,32 +124,29 @@ function mealRow(day, m) {
   } else {
     vote = `<div class="meal">
       <div class="info"><div class="name">${esc(m.name)}</div>
-        <div class="due" data-due="${m.cutoffAt}" data-word="마감" data-label="${esc(m.cutoff)} 마감">${esc(m.cutoff)} 마감</div></div>
+        <div class="due" data-due="${m.cutoffAt}" data-word="마감">${esc(m.cutoff)} 마감</div></div>
       <div class="choices">
-        <button type="button" class="eat ${m.choice === "eat" ? "on" : ""}" data-key="${key}" data-choice="eat">먹음</button>
-        <button type="button" class="skip ${m.choice === "skip" ? "on" : ""}" data-key="${key}" data-choice="skip">안먹음</button>
+        <button type="button" class="eat ${m.choice === "eat" ? "on" : ""}" data-meal="${m.id}" data-choice="eat">먹음</button>
+        <button type="button" class="skip ${m.choice === "skip" ? "on" : ""}" data-meal="${m.id}" data-choice="skip">안먹음</button>
       </div>
     </div>`;
   }
-  return vote + extraRow(key, m);
+  return vote + extraRow(m);
 }
 
 // 팀별 식수 담당자에게만 보이는 추가 인원(방문객 등) 등록 칸
-function extraRow(key, m) {
+function extraRow(m) {
   const x = m.extra;
   if (!x) return "";
   if (x.status === "open") {
-    // 평소에는 접어 두고, 입력한 내용이 있거나 투표 마감~확정 사이(추가 등록 시간)면 펼친다.
-    const open = x.count || x.note || m.status === "closed";
-    return `<details class="extra-toggle" ${open ? "open" : ""}><summary>+ ${esc(me.grp)} 추가 인원</summary>
-    <form class="extra" data-key="${key}">
+    return `<form class="extra" data-meal="${m.id}">
       <span class="extra-label">${esc(me.grp)} 추가</span>
       <input name="count" type="number" min="0" max="200" inputmode="numeric" value="${x.count}" aria-label="추가 인원">
       <span>명</span>
       <input name="note" maxlength="200" placeholder="예: 음봉 생산팀 교육 방문" value="${esc(x.note)}" aria-label="특이사항">
       <button>저장</button>
-      <span class="due" data-due="${m.finalAtMs}" data-word="확정" data-label="${esc(m.finalAt)} 확정">${esc(m.finalAt)} 확정</span>
-    </form></details>`;
+      <span class="due" data-due="${m.finalAtMs}" data-word="확정">${esc(m.finalAt)} 확정</span>
+    </form>`;
   }
   if (x.count || x.note) {
     return `<div class="extra closed">${esc(me.grp)} 추가 ${x.count}명${x.note ? " · " + esc(x.note) : ""} · 확정됨</div>`;
@@ -170,53 +154,36 @@ function extraRow(key, m) {
   return "";
 }
 
-async function vote(date, meal, choice) {
-  try {
-    await api("/api/vote", { date, meal: meal.id, choice });
-    meal.choice = choice;
-    return true;
-  } catch (err) {
-    toast(err.message);
-    loadSlots();
-    return false;
-  }
+async function vote(mealId, choice) {
+  await api("/api/vote", { date: today.date, meal: mealId, choice });
 }
 
-$("#days").addEventListener("click", async (e) => {
+$("#today").addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-choice]");
   if (!btn) return;
-  const [date, id] = btn.dataset.key.split("|");
-  const { meal } = findMeal(date, id);
-  if (!meal || meal.choice === btn.dataset.choice) return;
-  if (await vote(date, meal, btn.dataset.choice)) render();
+  const meal = today.meals.find((m) => m.id === btn.dataset.meal);
+  if (meal.choice === btn.dataset.choice) return;
+  try {
+    await vote(meal.id, btn.dataset.choice);
+    meal.choice = btn.dataset.choice;
+    render();
+  } catch (err) {
+    toast(err.message);
+    load();
+  }
 });
 
-$("#days").addEventListener("submit", async (e) => {
+$("#today").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = e.target.closest("form.extra");
-  const [date, meal] = form.dataset.key.split("|");
   const count = form.count.value === "" ? 0 : Number(form.count.value);
   try {
-    await api("/api/extra", { date, meal, count, note: form.note.value });
+    await api("/api/extra", { date: today.date, meal: form.dataset.meal, count, note: form.note.value });
     toast("추가 인원을 저장했습니다.");
   } catch (err) {
     toast(err.message);
   }
-  loadSlots();
-});
-
-$("#all-eat").addEventListener("click", async () => {
-  let count = 0;
-  for (const day of days) {
-    for (const meal of day.meals) {
-      if (meal.status === "open" && !meal.choice) {
-        if (!(await vote(day.date, meal, "eat"))) return;
-        count++;
-      }
-    }
-  }
-  render();
-  toast(count ? `${count}건을 '먹음'으로 투표했습니다.` : "미투표 항목이 없습니다.");
+  load();
 });
 
 // Teams 메시지의 먹음/안먹음 버튼으로 들어온 경우: 화면이 열린 뒤 여기서 투표한다.
@@ -225,20 +192,23 @@ async function quickVote() {
   if (!p.has("c")) return;
   history.replaceState(null, "", "/");
   const date = p.get("d"), id = p.get("m"), choice = p.get("c");
-  const { day, meal } = findMeal(date, id);
-  const what = day && meal ? `${day.label} ${meal.name}` : date;
+  const meal = today.meals.find((m) => m.id === id);
   try {
     await api("/api/vote", { date, meal: id, choice });
-    banner(`${what} '${CHOICE[choice] || choice}'(으)로 투표했습니다. 마감 전까지는 아래에서 바꿀 수 있습니다.`, true);
+    banner(`${today.label} ${meal ? meal.name : ""} '${CHOICE[choice] || choice}'(으)로 투표했습니다. 마감 전까지는 아래에서 바꿀 수 있습니다.`, true);
   } catch (err) {
     banner(err.message, false);
   }
-  await loadSlots();
+  await load();
 }
 
-// 1초마다 남은 시간을 갱신하고, 마감을 넘긴 항목이 생기면 서버에서 다시 받아 잠근다.
+// 1초마다 남은 시간을 갱신하고, 마감을 넘긴 항목이 생기거나 날짜가 바뀌면 서버에서 다시 받는다.
 function tick() {
   const now = serverNow();
+  if (now >= today.dayEndsAt) {
+    load();
+    return;
+  }
   $("#clock").textContent = "서버 시각 " + new Date(now).toLocaleString("ko-KR", {
     timeZone: "Asia/Seoul", month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
@@ -249,12 +219,12 @@ function tick() {
       expired = true;
       return;
     }
-    el.textContent = left < 86400000 ? `${el.dataset.word}까지 ${remaining(left)}` : el.dataset.label;
+    el.textContent = `${el.dataset.word}까지 ${remaining(left)}`;
     el.classList.toggle("soon", left < 3600000);
   });
-  if (expired) loadSlots();
+  if (expired) load();
 }
-setInterval(() => { if (!$("#vote").hidden) tick(); }, 1000);
+setInterval(() => { if (today && !$("#vote").hidden) tick(); }, 1000);
 
 async function start() {
   try {
@@ -268,7 +238,7 @@ async function start() {
   $("#logout").hidden = false;
   $("#nologin").hidden = true;
   $("#vote").hidden = false;
-  await loadSlots();
+  await load();
   await quickVote();
 }
 start();

@@ -206,6 +206,12 @@ details ul { margin: 8px 0 0; padding-left: 20px; columns: 2; }
 .badge.final { background: var(--lock-bg); color: var(--text); }
 .notes { margin: 12px 0 0; padding-left: 18px; font-size: 14px; }
 details p { margin: 6px 0 0; }
-.extra-toggle { margin: 0 0 10px; }
-.extra-toggle summary { cursor: pointer; font-size: 13px; color: var(--accent); padding: 2px 0 8px; width: max-content; }
-.extra-toggle .extra { margin: 0; }
+
+/* 현황판 월별 */
+.board-tabs { max-width: 240px; }
+.card-title { margin: 0 0 8px; font-size: 16px; }
+td.muted { color: var(--muted); }
+td small { color: var(--muted); font-size: 12px; }
+tr.go { cursor: pointer; }
+tr.go:hover td { background: var(--lock-bg); }
+tr.sum td { font-weight: 700; border-top: 2px solid var(--line); }

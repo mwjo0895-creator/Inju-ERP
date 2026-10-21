@@ -14,7 +14,6 @@ KST = timezone(timedelta(hours=9))
 CONFIG = {
     "siteName": "인주공장",
     "utcOffsetHours": 9,
-    "openDaysAhead": 7,
     "remindMinutesBefore": 15,
     "meals": [
         {"id": "lunch", "name": "점심", "notifyAt": "08:00", "cutoff": "09:00", "finalAt": "09:30", "days": [1, 2, 3, 4, 5]},
@@ -129,12 +128,25 @@ class MealVoteTest(unittest.TestCase):
         self.assertIn("마감", body["error"])
         self.assertEqual(self.summary()["meals"][0]["regular"], 1)
 
-    def test_no_meal_on_holidays_and_far_future(self):
+    def test_only_today_can_be_voted(self):
         c = self.login(2)
+        self.assertEqual(c.vote("2026-10-21", "lunch", "eat")[0], 200)
+        status, body = c.vote("2026-10-22", "lunch", "eat")  # 내일
+        self.assertEqual((status, body["error"]), (403, "오늘 식사만 투표할 수 있습니다."))
         self.assertEqual(c.vote("2026-10-24", "lunch", "eat")[0], 400)  # 토요일
         self.assertEqual(c.vote("2026-10-23", "lunch", "eat")[0], 400)  # 휴일
-        self.assertEqual(c.vote("2026-10-28", "lunch", "eat")[0], 200)  # 7일 뒤
-        self.assertEqual(c.vote("2026-10-29", "lunch", "eat")[0], 403)  # 8일 뒤
+        self.assertEqual(self.login(1).extra("2026-10-22", "lunch", 1)[0], 403)
+
+    def test_slots_show_today_only(self):
+        c = self.login(1)
+        c.vote("2026-10-21", "lunch", "eat")
+        self.set_time(9, 10)
+        _, data = c.call("GET", "/api/slots")
+        self.assertEqual(data["date"], "2026-10-21")
+        self.assertEqual([(m["id"], m["status"], m["choice"], m["extra"]["status"]) for m in data["meals"]],
+                         [("lunch", "closed", "eat", "open"), ("dinner", "open", None, "open")])
+        self.now = datetime(2026, 10, 23, 9, 0, tzinfo=KST)  # 휴일
+        self.assertEqual(c.call("GET", "/api/slots")[1]["meals"], [])
 
     def test_manager_extras_window(self):
         manager, member = self.login(1), self.login(2)
@@ -168,6 +180,23 @@ class MealVoteTest(unittest.TestCase):
         lines = body.decode("utf-8-sig").splitlines()
         self.assertEqual(lines[1:], ["2026-10-21,수,점심,생산팀,2,2,4,방문객"])
 
+    def test_month_view_counts_only_confirmed_meals(self):
+        self.now = datetime(2026, 10, 20, 8, 0, tzinfo=KST)  # 화요일
+        self.login(1).vote("2026-10-20", "lunch", "eat")
+        self.login(4).vote("2026-10-20", "lunch", "eat")
+        self.login(4).vote("2026-10-20", "dinner", "eat")
+        self.set_time(8, 30)  # 다음 날(21일) 아침: 20일 끼니는 모두 확정, 21일 점심은 진행 중
+        self.login(2).vote("2026-10-21", "lunch", "eat")
+        _, data = Client(self.app).call("GET", "/api/month", query={"month": ["2026-10"]})
+        days = {d["date"]: d["meals"] for d in data["days"]}
+        self.assertEqual(list(days)[-2:], ["2026-10-20", "2026-10-21"])  # 오늘까지만
+        self.assertEqual(days["2026-10-20"]["lunch"], {"total": 2, "extra": 0, "final": True})
+        self.assertEqual(days["2026-10-21"]["lunch"], {"total": 1, "extra": 0, "final": False})
+        self.assertEqual(data["totals"], {"lunch": 2, "dinner": 1})
+        self.assertEqual(data["groups"], [{"grp": "생산팀", "meals": {"lunch": 1, "dinner": 0}, "total": 1},
+                                          {"grp": "분석", "meals": {"lunch": 1, "dinner": 1}, "total": 2}])
+        self.assertEqual(Client(self.app).call("GET", "/api/month", query={"month": ["2026-13"]})[0], 400)
+
     # ---- 자동 알림 ----
 
     def run_at(self, hh, mm):
@@ -183,7 +212,7 @@ class MealVoteTest(unittest.TestCase):
         self.assertEqual([p["kind"] for p in sent], ["open"])
         self.assertEqual([m["to"] for m in sent[0]["teamsChat"]], ["a@x.com", "b@x.com", "d@x.com"])  # 이메일 없는 3번 제외
         buttons = sent[0]["teamsChat"][0]["card"]["actions"]
-        self.assertEqual([b["title"] for b in buttons], ["먹음", "안먹음", "다른 날도 미리 투표"])
+        self.assertEqual([b["title"] for b in buttons], ["먹음", "안먹음"])
         self.assertIn("c=eat", buttons[0]["url"])
         self.assertEqual(self.run_at(8, 5), [])  # 같은 알림은 한 번만
 
