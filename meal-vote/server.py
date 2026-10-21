@@ -64,6 +64,7 @@ MAX_EXTRA = 200
 SCHEMA_VERSION = 2
 RETRY_SECONDS = 120
 FINAL_GRACE = timedelta(hours=1)
+LINK_RESEND_SECONDS = 60
 SCHEDULER_SECONDS = 20
 
 SCHEMA = """
@@ -269,7 +270,7 @@ def open_url(title, url):
 
 
 class App:
-    def __init__(self, config, db_path, clock=None, send=None, base_url="http://localhost:8080"):
+    def __init__(self, config, db_path, clock=None, send=None, base_url="http://localhost:8080", connected=True):
         self.meals = config["meals"]
         self.meal_by_id = {m["id"]: m for m in self.meals}
         self.holidays = set(config.get("holidays", []))
@@ -283,6 +284,8 @@ class App:
         self.groups = []  # roster.csv에 나온 순서대로의 분류 목록
         self.roster_mtime = None
         self.last_try = {}
+        self.connected = connected  # Teams 워크플로가 연결되어 실제로 메시지가 나가는지
+        self.link_sent = {}  # 로그인 화면에서 접속 버튼을 보낸 시각 (사람별)
         self.lock = threading.Lock()
         self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
@@ -474,6 +477,36 @@ class App:
         return token
 
     # ---- API ----
+
+    def api_people(self, req):
+        """로그인 화면의 이름 목록 (분류별)."""
+        groups = {}
+        for u in self.active_users():
+            groups.setdefault(u["grp"], []).append({"id": u["id"], "name": u["name"], "title": u["title"]})
+        order = [g for g in self.groups if g in groups] + [g for g in groups if g not in self.groups]
+        return {"groups": [{"grp": g, "people": groups[g]} for g in order]}
+
+    def api_send_link(self, req):
+        """로그인 화면: 고른 사람의 Teams로 접속 버튼을 보낸다. 본인만 받으므로 비밀번호가 필요 없다."""
+        uid = req.data.get("id")
+        users = self.active_users("AND id = ?", (uid,)) if isinstance(uid, int) else []
+        if not users:
+            raise ApiError(404, "명단에 없는 사람입니다.")
+        u = users[0]
+        if not u["email"]:
+            raise ApiError(400, "Teams 주소가 등록되어 있지 않아 보낼 수 없습니다. 팀 식수 담당자에게 알려 주세요.")
+        now = self.now()
+        last = self.link_sent.get(u["id"])
+        if last and (now - last).total_seconds() < LINK_RESEND_SECONDS:
+            raise ApiError(429, "방금 보냈습니다. Teams를 확인하고, 1분 뒤에 다시 시도하세요.")
+        chat = [{"to": u["email"], "card": card([
+            text_block("식수 투표 접속", heading=True),
+            text_block("아래 버튼을 누르면 이 기기에서 식수 투표가 열립니다. 직접 요청하지 않았다면 무시하세요."),
+        ], [open_url("식수 투표 열기", self.personal_url(u))])}]
+        if not self.send(self.payload("login", now.date(), {"name": ""}, chat=chat)):
+            raise ApiError(502, "Teams로 보내지 못했습니다. 잠시 뒤에 다시 시도하세요.")
+        self.link_sent[u["id"]] = now
+        return {"ok": True, "connected": self.connected}
 
     def api_logout(self, req):
         if req.token:
@@ -885,6 +918,8 @@ class App:
 
 # (메서드 이름, 로그인 필요 여부)
 ROUTES = {
+    ("GET", "/api/people"): ("api_people", False),
+    ("POST", "/api/send-link"): ("api_send_link", False),
     ("POST", "/api/logout"): ("api_logout", False),
     ("GET", "/api/me"): ("api_me", True),
     ("GET", "/api/slots"): ("api_slots", True),
@@ -991,7 +1026,7 @@ def main():
     if not os.path.exists(args.roster):
         sys.exit("roster.csv가 없습니다. roster.example.csv를 복사해 roster.csv를 만들고 명단을 채우세요.")
     try:
-        app = App(config, args.db, send=make_sender(webhook, OUTBOX), base_url=base_url)
+        app = App(config, args.db, send=make_sender(webhook, OUTBOX), base_url=base_url, connected=bool(webhook))
         app.load_roster(args.roster)
     except (RuntimeError, ValueError) as e:
         sys.exit(str(e))

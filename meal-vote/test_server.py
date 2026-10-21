@@ -103,6 +103,31 @@ class MealVoteTest(unittest.TestCase):
         # 링크를 여는 것만으로는 투표되지 않는다 (화면 스크립트가 POST로 투표)
         self.assertEqual(self.summary()["meals"][0]["regular"], 0)
 
+    def test_login_screen_sends_link_to_own_teams(self):
+        c = Client(self.app)
+        _, people = c.call("GET", "/api/people")
+        self.assertEqual([(g["grp"], [p["name"] for p in g["people"]]) for g in people["groups"]],
+                         [("생산팀", ["조담당", "김생산", "이생산"]), ("분석", ["박분석"])])
+        status, body = c.call("POST", "/api/send-link", {"id": 2})
+        self.assertEqual((status, body["connected"]), (200, True))
+        dm = self.sent[-1]["teamsChat"]
+        self.assertEqual([m["to"] for m in dm], ["b@x.com"])  # 고른 사람 본인에게만
+        button = dm[0]["card"]["actions"][0]
+        self.assertEqual(button["title"], "식수 투표 열기")
+        self.assertEqual(c.call("GET", "/api/me")[0], 401)  # 보내기만 해서는 로그인되지 않는다
+        c.open_link(button["url"])
+        self.assertEqual(c.call("GET", "/api/me")[1]["name"], "김생산")
+
+    def test_login_screen_limits(self):
+        c = Client(self.app)
+        self.assertEqual(c.call("POST", "/api/send-link", {"id": 3})[0], 400)  # 이메일 없음
+        self.assertEqual(c.call("POST", "/api/send-link", {"id": 99})[0], 404)
+        self.assertEqual(c.call("POST", "/api/send-link", {"id": 2})[0], 200)
+        self.assertEqual(c.call("POST", "/api/send-link", {"id": 2})[0], 429)  # 1분 안에 또
+        self.now += timedelta(minutes=1)
+        self.send_ok = False
+        self.assertEqual(c.call("POST", "/api/send-link", {"id": 2})[0], 502)
+
     def test_roster_change_disables_removed_people(self):
         c = self.login(3)
         self.app.sync_roster([r for r in ROSTER if r["id"] != 3])
