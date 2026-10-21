@@ -2,3 +2,6 @@ meal.db
 meal.db-wal
 meal.db-shm
 __pycache__/
+# 실제 직원 명단과 알림 기록은 저장소(공개)에 올리지 않는다
+meal-vote/roster.csv
+meal-vote/outbox.log

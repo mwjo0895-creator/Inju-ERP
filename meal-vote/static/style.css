@@ -157,8 +157,6 @@ input, select {
 .board-meals { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
 .board-meal h2 { display: flex; justify-content: space-between; align-items: center; margin: 0 0 4px; font-size: 18px; }
 .badge { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; }
-.badge.open { background: var(--eat-bg); color: var(--eat); }
-.badge.closed { background: var(--lock-bg); color: var(--text); }
 .badge.upcoming { background: var(--lock-bg); color: var(--muted); }
 .big { font-size: 56px; font-weight: 700; line-height: 1.1; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
 .big small { font-size: 20px; font-weight: 500; color: var(--muted); }
@@ -176,3 +174,38 @@ details ul { margin: 8px 0 0; padding-left: 20px; columns: 2; }
   .choices { width: 100%; }
   .choices button { flex: 1; }
 }
+
+/* 개인 링크 안내, 빠른 투표 결과 */
+#nologin h2 { margin: 0 0 8px; font-size: 18px; }
+.banner { padding: 12px 16px; border-radius: 10px; margin-bottom: 12px; font-size: 15px; border: 1px solid; }
+.banner.ok { background: var(--eat-bg); border-color: var(--eat); color: var(--eat); }
+.banner.bad { background: var(--skip-bg); border-color: var(--skip); color: var(--skip); }
+
+/* 담당자 추가 인원 */
+.extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--lock-bg);
+  font-size: 14px;
+}
+.extra .extra-label { font-weight: 600; }
+.extra input { display: inline-block; width: auto; margin: 0; padding: 6px 8px; }
+.extra input[name="count"] { width: 64px; }
+.extra input[name="note"] { flex: 1; min-width: 140px; }
+.extra button { padding: 6px 12px; }
+.extra .due { font-size: 13px; color: var(--muted); }
+.extra.closed { color: var(--muted); }
+
+.badge.voting { background: var(--eat-bg); color: var(--eat); }
+.badge.extras { background: var(--lock-bg); color: var(--warn); }
+.badge.final { background: var(--lock-bg); color: var(--text); }
+.notes { margin: 12px 0 0; padding-left: 18px; font-size: 14px; }
+details p { margin: 6px 0 0; }
+.extra-toggle { margin: 0 0 10px; }
+.extra-toggle summary { cursor: pointer; font-size: 13px; color: var(--accent); padding: 2px 0 8px; width: max-content; }
+.extra-toggle .extra { margin: 0; }

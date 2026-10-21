@@ -1,12 +1,15 @@
 {
+  "siteName": "인주공장",
   "port": 8080,
+  "baseUrl": "",
   "utcOffsetHours": 9,
   "openDaysAhead": 7,
-  "sessionDays": 30,
-  "departments": ["생산", "품질", "설비", "관리", "협력사"],
+  "remindMinutesBefore": 15,
   "meals": [
-    { "id": "lunch", "name": "중식", "cutoff": "09:30", "cutoffDayOffset": 0, "days": [1, 2, 3, 4, 5] },
-    { "id": "dinner", "name": "석식", "cutoff": "14:00", "cutoffDayOffset": 0, "days": [1, 2, 3, 4, 5] }
+    { "id": "lunch", "name": "점심", "notifyAt": "08:00", "cutoff": "09:00", "finalAt": "09:30", "days": [1, 2, 3, 4, 5] },
+    { "id": "dinner", "name": "저녁", "notifyAt": "12:00", "cutoff": "14:30", "finalAt": "15:00", "days": [1, 2, 3, 4, 5] }
   ],
-  "holidays": ["2026-12-25", "2027-01-01"]
+  "holidays": ["2026-12-25", "2027-01-01"],
+  "webhookUrl": "",
+  "vendor": { "to": [], "cc": [] }
 }

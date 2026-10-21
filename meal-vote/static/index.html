@@ -18,34 +18,23 @@
 </header>
 
 <main>
-  <section id="auth" class="card" hidden>
-    <div class="tabs">
-      <button type="button" data-tab="login" class="on">로그인</button>
-      <button type="button" data-tab="register">처음 사용 (등록)</button>
-    </div>
-    <form id="login-form">
-      <label>사번 <input name="empNo" required autocomplete="username"></label>
-      <label>PIN <input name="pin" type="password" inputmode="numeric" required autocomplete="current-password"></label>
-      <button class="primary">로그인</button>
-    </form>
-    <form id="register-form" hidden>
-      <label>사번 <input name="empNo" required maxlength="20" autocomplete="username"></label>
-      <label>이름 <input name="name" required maxlength="20"></label>
-      <label id="dept-label">부서</label>
-      <label>PIN (숫자 4~8자리, 로그인할 때 사용) <input name="pin" type="password" inputmode="numeric" required pattern="\d{4,8}" autocomplete="new-password"></label>
-      <label>PIN 확인 <input name="pin2" type="password" inputmode="numeric" required autocomplete="new-password"></label>
-      <button class="primary">등록하고 시작</button>
-    </form>
-    <p class="msg" id="auth-msg"></p>
+  <section id="nologin" class="card" hidden>
+    <h2>Teams 메시지의 버튼으로 들어와 주세요</h2>
+    <p>투표 시간이 되면 Teams로 <b>먹음 / 안먹음</b> 버튼이 담긴 메시지가 옵니다.
+      버튼을 누르면 로그인 없이 바로 투표되고, 이 브라우저가 기억해서 다음부터는 이 주소로 바로 들어올 수 있습니다.</p>
+    <p class="hint">메시지를 받지 못했다면 팀 식수 담당자에게 알려 주세요.</p>
   </section>
+
+  <div id="banner" class="banner" hidden></div>
 
   <section id="vote" hidden>
     <div class="toolbar">
       <span class="clock" id="clock"></span>
-      <button id="all-eat" type="button">미응답 모두 '먹음'</button>
+      <button id="all-eat" type="button">미투표 모두 '먹음'</button>
     </div>
     <div id="days"></div>
-    <p class="hint">마감 시각은 서버 시계 기준이며, 마감이 지나면 자동으로 잠겨 누구도 바꿀 수 없습니다.</p>
+    <p class="hint">마감 시각은 서버 시계 기준이며, 마감이 지나면 자동으로 잠겨 누구도 바꿀 수 없습니다.
+      투표하지 않으면 식사가 준비되지 않습니다.</p>
   </section>
 </main>
 
@@ -54,8 +43,10 @@
 <script>
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const CHOICE = { eat: "먹음", skip: "안먹음" };
 
 let clockOffset = 0;  // 서버 시각 - 브라우저 시각 (ms)
+let me = null;
 let days = [];
 const serverNow = () => Date.now() + clockOffset;
 
@@ -84,6 +75,13 @@ function toast(text) {
   toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
 }
 
+function banner(text, ok) {
+  const el = $("#banner");
+  el.textContent = text;
+  el.className = "banner " + (ok ? "ok" : "bad");
+  el.hidden = false;
+}
+
 function remaining(ms) {
   const s = Math.floor(ms / 1000);
   const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
@@ -92,70 +90,16 @@ function remaining(ms) {
   return `${m}분 ${s % 60}초`;
 }
 
-/* ---- 로그인 / 등록 ---- */
-
-async function showAuth() {
-  $("#auth").hidden = false;
+function showNoLogin() {
+  $("#nologin").hidden = false;
   $("#vote").hidden = true;
   $("#logout").hidden = true;
   $("#who").textContent = "";
-  selectTab("login");
-  const cfg = await api("/api/config");
-  const deptLabel = $("#dept-label");
-  deptLabel.innerHTML = "부서 ";
-  let input;
-  if (cfg.departments.length) {
-    input = document.createElement("select");
-    input.innerHTML = '<option value="">선택하세요</option>' +
-      cfg.departments.map((d) => `<option>${esc(d)}</option>`).join("");
-  } else {
-    input = document.createElement("input");
-    input.maxLength = 30;
-  }
-  input.name = "dept";
-  input.required = true;
-  deptLabel.append(input);
 }
-
-function selectTab(tab) {
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
-  $("#login-form").hidden = tab !== "login";
-  $("#register-form").hidden = tab !== "register";
-  $("#auth-msg").textContent = "";
-}
-document.querySelectorAll(".tabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(btn.dataset.tab)));
-
-$("#login-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const f = e.target;
-  try {
-    await api("/api/login", { empNo: f.empNo.value, pin: f.pin.value });
-    f.reset();
-    start();
-  } catch (err) {
-    $("#auth-msg").textContent = err.message;
-  }
-});
-
-$("#register-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const f = e.target;
-  if (f.pin.value !== f.pin2.value) {
-    $("#auth-msg").textContent = "PIN 확인이 일치하지 않습니다.";
-    return;
-  }
-  try {
-    await api("/api/register", { empNo: f.empNo.value, name: f.name.value, dept: f.dept.value, pin: f.pin.value });
-    f.reset();
-    start();
-  } catch (err) {
-    $("#auth-msg").textContent = err.message;
-  }
-});
 
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", {});
-  showAuth();
+  showNoLogin();
 });
 
 /* ---- 투표 ---- */
@@ -165,6 +109,11 @@ async function loadSlots() {
   clockOffset = data.serverTime - Date.now();
   days = data.days;
   render();
+}
+
+function findMeal(date, id) {
+  const day = days.find((d) => d.date === date);
+  return { day, meal: day && day.meals.find((m) => m.id === id) };
 }
 
 function render() {
@@ -178,26 +127,47 @@ function render() {
 
 function mealRow(day, m) {
   const key = `${day.date}|${m.id}`;
+  let vote;
   if (m.status === "closed") {
-    const result = m.choice === "eat" ? '<b class="eat">먹음</b>' : m.choice === "skip" ? '<b class="skip">안먹음</b>' : "미응답";
-    return `<div class="meal">
-      <div class="info"><div class="name">${esc(m.name)}</div><div class="due">${esc(m.cutoffLabel)}됨</div></div>
+    const result = m.choice ? `<b class="${m.choice}">${CHOICE[m.choice]}</b>` : "미투표";
+    vote = `<div class="meal">
+      <div class="info"><div class="name">${esc(m.name)}</div><div class="due">${esc(m.cutoff)} 마감됨</div></div>
       <div class="locked">마감 · ${result}</div>
     </div>`;
+  } else {
+    vote = `<div class="meal">
+      <div class="info"><div class="name">${esc(m.name)}</div>
+        <div class="due" data-due="${m.cutoffAt}" data-word="마감" data-label="${esc(m.cutoff)} 마감">${esc(m.cutoff)} 마감</div></div>
+      <div class="choices">
+        <button type="button" class="eat ${m.choice === "eat" ? "on" : ""}" data-key="${key}" data-choice="eat">먹음</button>
+        <button type="button" class="skip ${m.choice === "skip" ? "on" : ""}" data-key="${key}" data-choice="skip">안먹음</button>
+      </div>
+    </div>`;
   }
-  return `<div class="meal">
-    <div class="info"><div class="name">${esc(m.name)}</div><div class="due" data-due="${m.cutoffAt}">${esc(m.cutoffLabel)}</div></div>
-    <div class="choices">
-      <button type="button" class="eat ${m.choice === "eat" ? "on" : ""}" data-key="${key}" data-choice="eat">먹음</button>
-      <button type="button" class="skip ${m.choice === "skip" ? "on" : ""}" data-key="${key}" data-choice="skip">안먹음</button>
-    </div>
-  </div>`;
+  return vote + extraRow(key, m);
 }
 
-function findMeal(key) {
-  const [date, id] = key.split("|");
-  const day = days.find((d) => d.date === date);
-  return { date, meal: day && day.meals.find((m) => m.id === id) };
+// 팀별 식수 담당자에게만 보이는 추가 인원(방문객 등) 등록 칸
+function extraRow(key, m) {
+  const x = m.extra;
+  if (!x) return "";
+  if (x.status === "open") {
+    // 평소에는 접어 두고, 입력한 내용이 있거나 투표 마감~확정 사이(추가 등록 시간)면 펼친다.
+    const open = x.count || x.note || m.status === "closed";
+    return `<details class="extra-toggle" ${open ? "open" : ""}><summary>+ ${esc(me.grp)} 추가 인원</summary>
+    <form class="extra" data-key="${key}">
+      <span class="extra-label">${esc(me.grp)} 추가</span>
+      <input name="count" type="number" min="0" max="200" inputmode="numeric" value="${x.count}" aria-label="추가 인원">
+      <span>명</span>
+      <input name="note" maxlength="200" placeholder="예: 음봉 생산팀 교육 방문" value="${esc(x.note)}" aria-label="특이사항">
+      <button>저장</button>
+      <span class="due" data-due="${m.finalAtMs}" data-word="확정" data-label="${esc(m.finalAt)} 확정">${esc(m.finalAt)} 확정</span>
+    </form></details>`;
+  }
+  if (x.count || x.note) {
+    return `<div class="extra closed">${esc(me.grp)} 추가 ${x.count}명${x.note ? " · " + esc(x.note) : ""} · 확정됨</div>`;
+  }
+  return "";
 }
 
 async function vote(date, meal, choice) {
@@ -207,8 +177,7 @@ async function vote(date, meal, choice) {
     return true;
   } catch (err) {
     toast(err.message);
-    if (err.status === 401) showAuth();
-    else loadSlots();
+    loadSlots();
     return false;
   }
 }
@@ -216,9 +185,24 @@ async function vote(date, meal, choice) {
 $("#days").addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-choice]");
   if (!btn) return;
-  const { date, meal } = findMeal(btn.dataset.key);
+  const [date, id] = btn.dataset.key.split("|");
+  const { meal } = findMeal(date, id);
   if (!meal || meal.choice === btn.dataset.choice) return;
   if (await vote(date, meal, btn.dataset.choice)) render();
+});
+
+$("#days").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target.closest("form.extra");
+  const [date, meal] = form.dataset.key.split("|");
+  const count = form.count.value === "" ? 0 : Number(form.count.value);
+  try {
+    await api("/api/extra", { date, meal, count, note: form.note.value });
+    toast("추가 인원을 저장했습니다.");
+  } catch (err) {
+    toast(err.message);
+  }
+  loadSlots();
 });
 
 $("#all-eat").addEventListener("click", async () => {
@@ -232,8 +216,25 @@ $("#all-eat").addEventListener("click", async () => {
     }
   }
   render();
-  toast(count ? `${count}건을 '먹음'으로 투표했습니다.` : "미응답 항목이 없습니다.");
+  toast(count ? `${count}건을 '먹음'으로 투표했습니다.` : "미투표 항목이 없습니다.");
 });
+
+// Teams 메시지의 먹음/안먹음 버튼으로 들어온 경우: 화면이 열린 뒤 여기서 투표한다.
+async function quickVote() {
+  const p = new URLSearchParams(location.search);
+  if (!p.has("c")) return;
+  history.replaceState(null, "", "/");
+  const date = p.get("d"), id = p.get("m"), choice = p.get("c");
+  const { day, meal } = findMeal(date, id);
+  const what = day && meal ? `${day.label} ${meal.name}` : date;
+  try {
+    await api("/api/vote", { date, meal: id, choice });
+    banner(`${what} '${CHOICE[choice] || choice}'(으)로 투표했습니다. 마감 전까지는 아래에서 바꿀 수 있습니다.`, true);
+  } catch (err) {
+    banner(err.message, false);
+  }
+  await loadSlots();
+}
 
 // 1초마다 남은 시간을 갱신하고, 마감을 넘긴 항목이 생기면 서버에서 다시 받아 잠근다.
 function tick() {
@@ -248,7 +249,7 @@ function tick() {
       expired = true;
       return;
     }
-    el.textContent = left < 86400000 ? `마감까지 ${remaining(left)}` : el.textContent;
+    el.textContent = left < 86400000 ? `${el.dataset.word}까지 ${remaining(left)}` : el.dataset.label;
     el.classList.toggle("soon", left < 3600000);
   });
   if (expired) loadSlots();
@@ -257,16 +258,18 @@ setInterval(() => { if (!$("#vote").hidden) tick(); }, 1000);
 
 async function start() {
   try {
-    const me = await api("/api/me");
-    $("#who").textContent = `${me.dept} ${me.name}`;
-    $("#logout").hidden = false;
-    $("#auth").hidden = true;
-    $("#vote").hidden = false;
-    await loadSlots();
+    me = await api("/api/me");
   } catch (err) {
-    if (err.status === 401) showAuth();
+    if (err.status === 401) showNoLogin();
     else toast(err.message);
+    return;
   }
+  $("#who").textContent = `${me.grp} · ${me.name} ${me.title}`.trim();
+  $("#logout").hidden = false;
+  $("#nologin").hidden = true;
+  $("#vote").hidden = false;
+  await loadSlots();
+  await quickVote();
 }
 start();
 </script>
